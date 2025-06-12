@@ -1,25 +1,36 @@
+import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from zulip_bots.lib import BotHandler
 from bot_config import ADMINS
 import re
+from supabase import create_client, Client
 
-user_sessions = {}
+# Initialize Supabase client
+SUPABASE_URL = os.getenv("https://hunbvxucuezoihhntzml.supabase.co")
+SUPABASE_KEY = os.getenv("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh1bmJ2eHVjdWV6b2loaG50em1sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk3NDU1MzYsImV4cCI6MjA2NTMyMTUzNn0.kJvBT9145LahqF_By-pU-umnhwUbAahbFjI3AOBkGUY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Helper function to get all users from Supabase
 def get_all_users():
-    return list(user_sessions.keys())
+    users = supabase.table('clock_entries').select('user_email').distinct().execute()
+    return [user['user_email'] for user in users.data]
 
+# Helper function to get the user sessions from Supabase
 def get_user_sessions(user, since=None):
-    sessions = user_sessions.get(user, [])
+    query = supabase.table('clock_entries').select('*').eq('user_email', user)
     if since:
-        since_dt = datetime.fromisoformat(since)
-        return [s for s in sessions if datetime.fromisoformat(s[1]) >= since_dt]
-    return sessions
+        query = query.gte('timestamp', since)
+    return query.execute().data
 
+# Helper function to log an event (clock-in or clock-out) to Supabase
 def log_event(user, event):
     ts = datetime.now(ZoneInfo("UTC")).isoformat()
-    user_sessions.setdefault(user, []).append((event, ts))
+    supabase.table('clock_entries').insert([
+        {'user_email': user, 'action': event, 'timestamp': ts}
+    ]).execute()
 
+# Function to generate the stats for the period (day, week, month, year, all)
 def generate_stats(period="day", target_user=None):
     now = datetime.now(ZoneInfo("UTC"))
     since = None
@@ -31,6 +42,7 @@ def generate_stats(period="day", target_user=None):
         since = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     elif period == "year":
         since = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    
     users = [target_user] if target_user else get_all_users()
     title = period.title() if period != "all" else "All time"
 
@@ -46,18 +58,9 @@ def generate_stats(period="day", target_user=None):
                 last = None
         lines.append(f"- {u}: {total:.2f} hrs")
 
-    if since and period in ("week", "month", "year"):
-        elapsed = now - since
-        if period == "week":
-            lines.append(f"Units elapsed: {elapsed.days // 7} week(s)")
-        elif period == "month":
-            months = (now.year - since.year) * 12 + now.month - since.month
-            lines.append(f"Units elapsed: {months} month(s)")
-        elif period == "year":
-            lines.append(f"Units elapsed: {now.year - since.year} year(s)")
-
     return "\n".join(lines)
 
+# Helper function to format timestamps
 def fmt_multi(ts):
     fmt = "%Y-%m-%d %H:%M:%S"
     zones = [
@@ -71,10 +74,12 @@ def fmt_multi(ts):
         parts.append(f"{abbr} {ts.astimezone(ZoneInfo(z)).strftime(fmt)}")
     return " | ".join(parts)
 
+# Helper function to strip Zulip mentions from the message
 def strip_mention(token):
     raw = token.lstrip("@*<").rstrip("*>")
     return raw.split("|", 1)[0]
 
+# Main Handler Class
 class Handler:
     def usage(self) -> str:
         return (
@@ -88,17 +93,17 @@ class Handler:
         )
 
     def handle_message(self, message, bot_handler: BotHandler) -> None:
-        text         = message["content"].strip()
-        parts        = text.split()
+        text = message["content"].strip()
+        parts = text.split()
         if not parts:
             return
-        cmd          = parts[0].lower()
-        sender_name  = message["sender_full_name"]
+        cmd = parts[0].lower()
+        sender_name = message["sender_full_name"]
         sender_email = message["sender_email"]
 
         if cmd in ("in", "clock") and len(parts) > 1 and parts[1].lower() == "in":
             now = datetime.now(ZoneInfo("UTC"))
-            log_event(sender_name, "in")
+            log_event(sender_email, "in")
             bot_handler.send_reply(
                 message,
                 f"✅ {sender_name} CLOCK IN at:\n{fmt_multi(now)}"
@@ -107,7 +112,7 @@ class Handler:
 
         if cmd in ("out", "clock") and len(parts) > 1 and parts[1].lower() == "out":
             now = datetime.now(ZoneInfo("UTC"))
-            log_event(sender_name, "out")
+            log_event(sender_email, "out")
             bot_handler.send_reply(
                 message,
                 f"⏱️ {sender_name} CLOCK OUT at:\n{fmt_multi(now)}"
@@ -147,9 +152,9 @@ class Handler:
                 return
 
             try:
-                n    = int(parts[-2])
+                n = int(parts[-2])
                 unit = parts[-1].lower()
-                now  = datetime.now(ZoneInfo("UTC"))
+                now = datetime.now(ZoneInfo("UTC"))
                 if unit.startswith("week"):
                     since = now - timedelta(weeks=n)
                 elif unit.startswith("month"):
