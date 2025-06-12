@@ -1,3 +1,5 @@
 zulip
 zulip-bots
 importlib_metadata
+supabase
+python-dotenv
