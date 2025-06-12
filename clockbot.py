@@ -5,10 +5,14 @@ from zulip_bots.lib import BotHandler
 from bot_config import ADMINS
 import re
 from supabase import create_client, Client
+from dotenv import load_dotenv
+
+# Load environment variables from .env (if running locally)
+load_dotenv()
 
 # Initialize Supabase client
-SUPABASE_URL = os.getenv("https://hunbvxucuezoihhntzml.supabase.co")
-SUPABASE_KEY = os.getenv("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh1bmJ2eHVjdWV6b2loaG50em1sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk3NDU1MzYsImV4cCI6MjA2NTMyMTUzNn0.kJvBT9145LahqF_By-pU-umnhwUbAahbFjI3AOBkGUY")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Helper function to get all users from Supabase
